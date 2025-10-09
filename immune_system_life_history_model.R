@@ -1,32 +1,4 @@
-#' ---
-#' title: "Toy multistrain immunity model from antibodies to epitopes"
-#' output:
-#'   md_document
-#' 
-#' ---
-#' 
-#' 
-#' # Toy multistrain immunity model from antibodies to epitopes
-#' 
-#' 
-#' **What?** Implement a multistrain extension of the typhoid/polio/etc intrahost immunity model in the context of a constant force-of-infection cohort model.
-#' 
-#' **What did I learn?**
-#' 
-#' **What's next?** 
-#'   
-#' <!-- more -->
-#' 
-#' ## Outline
-#' 
-#' 
-#' ## The code
-#'
-#'  First, let's get some boilerplate out of the way and set up our environment.
-#'
-#+ echo=TRUE, message=FALSE, results = 'hide'
 # imports
-library(tidyverse)
 library(mvtnorm)
 library(matrixStats)
 
@@ -122,26 +94,31 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
 }
 
 # infection model, based on observed titer (could (should?) also do by individal-antibody titers but this is easier for now)
-probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.46){
-  titer = 2^(log2_NAb_pre %*% sensitivity/sum(sensitivity))
+probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.8){
+  titer = 2^(log2_NAb_pre %*% sensitivity)
   p = titer^(-gamma)
   return(p)
 }
 
 # immune system dynamics model
-immune_system_life_history = function(immune_system,pathogens,exposures,Duration){
+immune_system_life_history = function(immune_system,pathogens,exposures,Duration,
+                                      gamma=0.8){
   
   exposure_counter = 0
+  infected = 0 * exposures$time_exposed
+  p_inf=infected
   
   for(k in exposures$time_exposed[1]:Duration){
     
     if (k %in% exposures$time_exposed){
       exposure_counter = exposure_counter + 1
       
-      p_inf = probability_infected(log2_NAb_pre = immune_system$log2_NAb[k-1,],
-                                   sensitivity=pathogens$sensitivity[,exposures$pathogen_exposed[exposure_counter]])
+      p_inf[exposure_counter] = probability_infected(log2_NAb_pre = immune_system$log2_NAb[k-1,],
+                                   sensitivity=pathogens$sensitivity[,exposures$pathogen_exposed[exposure_counter]],
+                                   gamma=gamma)
       
-      if (runif(1)<p_inf){
+      if (runif(1)<p_inf[exposure_counter]){
+        infected[exposure_counter]=1
         idx = pathogens$immunogenicity[,exposures$pathogen_exposed[exposure_counter]] >0
         
         immune_system$log2_NAb[k,idx] = immune_system$log2_NAb[k-1,idx] + 
@@ -161,82 +138,65 @@ immune_system_life_history = function(immune_system,pathogens,exposures,Duration
   serum_NAb=(2^(immune_system$log2_NAb)) %*% pathogens$sensitivity
   
   return(list(immune_system = immune_system,
-              serum_NAb=data.frame(year = (1:Duration)/12,serum_NAb)))
+              serum_NAb=data.frame(year = (1:Duration)/12,serum_NAb),
+              infections = data.frame(year=exposures$time_exposed/12,pathogen=exposures$pathogen_exposed,
+                                      infected=infected,p_inf=p_inf)))
 }
 
 
-# config!
 
-Duration = 50*12 # months
-N_expected_antibodies_per_pathogen = 1e3 # this is really few epitopes times many antibodies per epitope...
-N_pathogens = 3
+## plot helpers
+gg_serum_titers = function(person){
+  serum_plot = person$serum_NAb |> pivot_longer(-year,names_to='pathogen',values_to='NAb',names_prefix='pathogen_') |>
+    left_join(person$infections |> mutate(pathogen = as.character(pathogen)))
+  p=ggplot(serum_plot) +
+    geom_line(aes(x=year,y=NAb,color=pathogen)) +
+    geom_point(data = serum_plot |> filter(!is.na(infected)),aes(x=year,y=NAb,color=pathogen)) +
+    theme_bw() +
+    scale_y_continuous(trans='log2')
+  return(p)
+}
 
-# antibody correlation: 
-# - pathogens 1 and 2 are different strains of the same serogroup
-# - pathogen 3 is a different serogroup 
-antibody_correlation_matrix = m <- diag(1, N_pathogens)
-antibody_correlation_matrix[1,2] <- 0.9 -> antibody_correlation_matrix[2,1]
-rownames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
-colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
-antibody_correlation_matrix
-
-# initialize!
-set.seed(10)
-pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
-immune_system = initialize_immune_system(pathogens,Duration)
-exposures = initialize_poisson_exposure(exposure_rate=1/60,Duration,N_pathogens)
-
-# run
-person = immune_system_life_history(immune_system,pathogens,exposures,Duration)
-
-## plot some fun stuff!
-
-# serum titers over time
-serum_plot = person$serum_NAb |> pivot_longer(-year,names_to='pathogen',values_to='NAb',names_prefix='pathogen_') 
-ggplot(serum_plot) +
-  geom_line(aes(x=year,y=NAb,color=pathogen)) +
-  theme_bw() +
-  scale_y_continuous(trans='log2')
-
-
-## individual antibodies
-for (k in 1:N_pathogens){
-  antibodies = rownames(pathogens$sensitivity)[pathogens$sensitivity[,k]>0]
-  tmp_waning_rates = person$immune_system$waning_rate[antibodies]
-  
-  # select waning rates by quintiles
-  n_per <- 40
-  take <- data.frame(waning_rate = tmp_waning_rates, i = seq_along(tmp_waning_rates) ,
-                 row.names = names(tmp_waning_rates)) |>
-    mutate(waning_rate_quintile = ntile(waning_rate, 5)) |>
-    # filter(q %% 2 == 1) |> # grab odd bins
-    group_by(waning_rate_quintile) |>
-    slice_sample(n = n_per, replace = FALSE) |>
-    mutate(rep = 1:n_per) |>
-    ungroup() |>
-    mutate(antibody = sub('antibody_','',names(tmp_waning_rates)[i])) |>
-    mutate(sensitivity = pathogens$sensitivity[names(tmp_waning_rates)[i],k]) |>
-    mutate(waning_rate_quintile = factor(c('first','second','third','fourth','fifth')[waning_rate_quintile],
-                                         levels=c('first','second','third','fourth','fifth')))
-  
-  plot_dat =  data.frame(year = (1:Duration)/12,
-                         person$immune_system$log2_NAb[,antibodies[take$i]]) |>
-    pivot_longer(-year,names_to = 'antibody',values_to = 'log2_titer',names_prefix = 'antibody_') |>
-    left_join(take |> select(-i)) |>
-    group_by(waning_rate_quintile,year) |>
-    mutate(mean_log2_titer = log2(sum((2^log2_titer)*sensitivity)/sum(sensitivity))) |>
-    mutate(pathogen=k)
-  if (k==1){ 
-    antibody_plot = plot_dat
-  } else {
-    antibody_plot = rbind(antibody_plot,plot_dat)
+gg_antibody_histories_by_waning_quintile = function(N_pathogens,Duration,pathogens,person){
+  ## individual antibodies
+  for (k in 1:N_pathogens){
+    antibodies = rownames(pathogens$sensitivity)[pathogens$sensitivity[,k]>0]
+    tmp_waning_rates = person$immune_system$waning_rate[antibodies]
+    
+    # select waning rates by quintiles
+    n_per <- 40
+    take <- data.frame(waning_rate = tmp_waning_rates, i = seq_along(tmp_waning_rates) ,
+                       row.names = names(tmp_waning_rates)) |>
+      mutate(waning_rate_quintile = ntile(waning_rate, 5)) |>
+      group_by(waning_rate_quintile) |>
+      slice_sample(n = n_per, replace = FALSE) |>
+      mutate(rep = 1:n_per) |>
+      ungroup() |>
+      mutate(antibody = sub('antibody_','',names(tmp_waning_rates)[i])) |>
+      mutate(sensitivity = pathogens$sensitivity[names(tmp_waning_rates)[i],k]) |>
+      mutate(waning_rate_quintile = factor(c('first','second','third','fourth','fifth')[waning_rate_quintile],
+                                           levels=c('first','second','third','fourth','fifth')))
+    
+    plot_dat =  data.frame(year = (1:Duration)/12,
+                           person$immune_system$log2_NAb[,antibodies[take$i]]) |>
+      pivot_longer(-year,names_to = 'antibody',values_to = 'log2_titer',names_prefix = 'antibody_') |>
+      left_join(take |> select(-i)) |>
+      group_by(waning_rate_quintile,year) |>
+      mutate(mean_log2_titer = log2(sum((2^log2_titer)*sensitivity)/sum(sensitivity))) |>
+      mutate(pathogen=k)
+    if (k==1){ 
+      antibody_plot_dat = plot_dat
+    } else {
+      antibody_plot_dat = rbind(antibody_plot_dat,plot_dat)
+    }
   }
-
+  
+  p=ggplot(antibody_plot_dat,aes(x=year,y=log2_titer)) +
+    geom_line(aes(group=antibody),alpha=0.1) +
+    geom_line(aes(y=mean_log2_titer),color='blue') +
+    facet_grid('waning_rate_quintile~pathogen') + 
+    theme_bw() +
+    guides(color='none') + ylab('log2(titer)')
+  
+  return(p)
 }
-
-ggplot(antibody_plot,aes(x=year,y=log2_titer)) +
-  geom_line(aes(group=antibody),alpha=0.1) +
-  geom_line(aes(y=mean_log2_titer),color='blue') +
-  facet_grid('waning_rate_quintile~pathogen') + 
-  theme_bw() +
-  guides(color='none') + ylab('log2(titer)')
