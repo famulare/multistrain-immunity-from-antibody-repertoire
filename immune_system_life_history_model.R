@@ -2,13 +2,20 @@
 library(mvtnorm)
 library(matrixStats)
 
-# helper functions
+# internal functions
 fold_rise = function(log2_NAb_pre=1, weights=1,
                      max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9){
   pmax(0,rnorm(n=length(log2_NAb_pre),
                mean=pmax(0,weights * mu * (1-log2_NAb_pre/max_log2_NAb)),
                sd=pmax(0,weights*sigma * (1-log2_NAb_pre/max_log2_NAb))))
 } 
+
+# infection model, based on observed titer (could (should?) also do by individal-antibody titers but this is easier for now)
+probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.8){
+  titer = 2^(log2_NAb_pre %*% sensitivity)
+  p = titer^(-gamma)
+  return(p)
+}
 
 rdirichlet_copula <- function(n, m, rho, total, nonzero_positions=NULL) {
   # helper to define antibody relevances for each pathogen, with approximate antibody correlations (thanks chatGPT!)
@@ -93,16 +100,10 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
   return(list(time_exposed=time_exposed,pathogen_exposed=pathogen_exposed))
 }
 
-# infection model, based on observed titer (could (should?) also do by individal-antibody titers but this is easier for now)
-probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.8){
-  titer = 2^(log2_NAb_pre %*% sensitivity)
-  p = titer^(-gamma)
-  return(p)
-}
-
 # immune system dynamics model
 immune_system_life_history = function(immune_system,pathogens,exposures,Duration,
-                                      gamma=0.8){
+                                      gamma=0.8,
+                                      max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9){
   
   exposure_counter = 0
   infected = 0 * exposures$time_exposed
@@ -123,7 +124,8 @@ immune_system_life_history = function(immune_system,pathogens,exposures,Duration
         
         immune_system$log2_NAb[k,idx] = immune_system$log2_NAb[k-1,idx] + 
                                             fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,idx], 
-                                                      weights = pathogens$immunogenicity[idx,exposures$pathogen_exposed[exposure_counter]])
+                                                      weights = pathogens$immunogenicity[idx,exposures$pathogen_exposed[exposure_counter]],
+                                                      max_log2_NAb = max_log2_NAb, mu = mu, sigma=sigma)
         immune_system$log2_NAb[k,!idx] = pmax(0,immune_system$log2_NAb[k-1,!idx] - immune_system$waning_rate[!idx]*1.44)
       } else {
         immune_system$log2_NAb[k,] = pmax(0,immune_system$log2_NAb[k-1,] - immune_system$waning_rate*1.44)
