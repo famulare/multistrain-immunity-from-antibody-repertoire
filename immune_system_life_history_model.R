@@ -60,7 +60,8 @@ sample_waning_rates_given_immunogenicity <- function(u, rho=0.4,
 
 
 # core model functions
-intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix){
+intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
+                               alpha=1){
   
   # randomly draw number of actual antibodies per pathogen
   n_antibodies = 1+rpois(N_expected_antibodies_per_pathogen-1,n=N_pathogens)
@@ -71,13 +72,15 @@ intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,an
   # define the pathogen immunogenicity (strenth of immune system stimulation)
   immunogenicity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
                                       rho=antibody_correlation_matrix, 
-                                      total = n_antibodies)
+                                      total = n_antibodies,
+                                      alpha = alpha)
   
   # define the pathogen sensitivity (strength of neutralization)
   sensitivity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
                                    rho=antibody_correlation_matrix, 
                                    total = n_antibodies,
-                                   nonzero_positions = immunogenicity>0)
+                                   nonzero_positions = immunogenicity>0,
+                                   alpha = alpha)
   
   # get rid of unnecessary zeros
   needed_antibodies = apply(immunogenicity>0,1,any)
@@ -91,16 +94,13 @@ intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,an
 }
 
 # initial immune system (antibody titer model)
-initialize_immune_system = function(pathogens,
-                                    Duration,
-                                    shape=1, mean_decay_time=30/21){
+initialize_immune_system = function(pathogens,Duration){
   
   # antibody titers per antibody
   log2_NAb = matrix(rep(0,nrow(pathogens$sensitivity)*Duration),nrow=Duration)
   colnames(log2_NAb) = rownames(pathogens$immunogenicity)
   
-  # waning rate per antibody
-  # waning_rate = rgamma(nrow(pathogens$sensitivity), shape = shape, scale = mean_decay_time/shape)
+  # initialize waning rate per antibody
   waning_rate = rep(0,nrow(pathogens$immunogenicity))
   names(waning_rate) = rownames(pathogens$immunogenicity)
   
@@ -121,9 +121,10 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
 immune_system_life_history = function(pathogens,exposures,Duration,
                                       gamma=0.8,
                                       max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
-                                      shape=1, mean_decay_time=30/21){
+                                      shape=1, mean_decay_time=30/21,
+                                      alpha=1){
   
-  immune_system = initialize_immune_system(pathogens,Duration,shape=shape, mean_decay_time=mean_decay_time)
+  immune_system = initialize_immune_system(pathogens,Duration)
   
   exposure_counter = 0
   infected = 0 * exposures$time_exposed
@@ -153,7 +154,9 @@ immune_system_life_history = function(pathogens,exposures,Duration,
         if (any(!initialized_NAb_idx & infection_idx)){
           immune_system$waning_rate[!initialized_NAb_idx & infection_idx] =
             sample_waning_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
-                                                                                  exposures$pathogen_exposed[exposure_counter]])
+                                                                                  exposures$pathogen_exposed[exposure_counter]],
+                                                     alpha = alpha,
+                                                     shape=shape, mean_decay_time=mean_decay_time)
         }
         
         immune_system$log2_NAb[k,infection_idx] = immune_system$log2_NAb[k-1,infection_idx] + 

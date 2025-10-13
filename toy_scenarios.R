@@ -150,14 +150,15 @@ antibody_correlation_matrix
   antibody_correlation_matrix = diag(1, N_pathogens)
   antibody_correlation_matrix[1,2] <- 0.9 -> antibody_correlation_matrix[2,1]
   antibody_correlation_matrix[1,3] <- 0.4 -> antibody_correlation_matrix[3,1]
-  antibody_correlation_matrix[2,3] <- 0.3 -> antibody_correlation_matrix[3,2]
+  antibody_correlation_matrix[2,3] <- 0.4 -> antibody_correlation_matrix[3,2]
   rownames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
   colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
   antibody_correlation_matrix
   
   # original mrna-like
   set.seed(10)
-  pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
+  pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
+                                  alpha=1)
 
   exposures = data.frame(time_exposed = c(11,12, 20),
                          pathogen_exposed = c(1,1,1)) 
@@ -166,7 +167,7 @@ antibody_correlation_matrix
   # response model loosely informed by https://www.nejm.org/doi/full/10.1056/NEJMc2119912
   person = immune_system_life_history(pathogens,exposures,Duration,
                                       gamma=0, # IM vaccine doesn't protect from itself
-                                      max_log2_NAb=20,mu = 9, sigma=2)
+                                      max_log2_NAb=20,mu = 9, sigma=2,shape=0.8)
   
   # serum titers over time
   gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5))
@@ -174,7 +175,9 @@ antibody_correlation_matrix
   # sampled individual antibody traces and sensitivity-weighted average by waning rate quintile
   gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
   
-  # compare to wuhan
+  ## I'm not sure why I can't get a bigger boost. To play with...
+  
+  # cross-responses
   serum_plot = data.frame(year=person$serum_NAb$year,
                           relative_titer_delta_over_wuhan = person$serum_NAb$pathogen_2/person$serum_NAb$pathogen_1,
                           relative_titer_omicron_over_wuhan = person$serum_NAb$pathogen_3/person$serum_NAb$pathogen_1) |>
@@ -195,7 +198,7 @@ antibody_correlation_matrix
 
   
   
-  # original mrna and then omicron booster
+  # original mrna and then omicron monovalent booster
   set.seed(10)
   pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
 
@@ -215,4 +218,31 @@ antibody_correlation_matrix
   gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
   
   # does reproduce the OAS-like finding "for free"
+  
+  
+  
+  # original mrna and then wuhan-omicron bivalent booster
+  set.seed(10)
+  pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
+  
+  # need to play with "dose" and solve why booster isn't as strong as it should be...
+  pathogens$immunogenicity = cbind(pathogens$immunogenicity, 1*(pathogens$immunogenicity[,1]+pathogens$immunogenicity[,3]))
+  pathogens$sensitivity = cbind(pathogens$sensitivity, 1*(pathogens$sensitivity[,1]+pathogens$sensitivity[,3]))
+
+  exposures = data.frame(time_exposed = c(11,12, 20),
+                         pathogen_exposed = c(1,1,4)) 
+  
+  # run
+  # response model loosely informed by https://www.nejm.org/doi/full/10.1056/NEJMc2119912
+  person = immune_system_life_history(pathogens,exposures,Duration,
+                                      gamma=0, # IM vaccine doesn't protect from itself
+                                      max_log2_NAb=20,mu = 9, sigma=2)
+  
+  # serum titers over time
+  gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5))
+  
+  # sampled individual antibody traces and sensitivity-weighted average by waning rate quintile
+  gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
+  
+
   
