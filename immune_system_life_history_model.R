@@ -17,7 +17,7 @@ probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.8){
   return(p)
 }
 
-rdirichlet_copula <- function(n, m, rho, total, nonzero_positions=NULL) {
+rdirichlet_copula <- function(n, m, rho, total, alpha=1,nonzero_positions=NULL) {
   # helper to define antibody relevances for each pathogen, with approximate antibody correlations (thanks chatGPT!)
   
   # For each component k=1..m, draw an n-vector ~ N(0, rho)
@@ -33,7 +33,7 @@ rdirichlet_copula <- function(n, m, rho, total, nonzero_positions=NULL) {
   U <- pnorm(Z)                     # m x n uniforms from Gaussian copula
   U[!keep] <- 0
   
-  G <- qexp(U, rate = 1)             # m x n exponentials (Gamma(shape=1))
+  G <- qgamma(U, rate = 1,shape=alpha)             # m x n exponentials (Gamma(shape=1))
   X <- t(G)                          # n x m
   X <- t(X / rowMaxs(X))             # normalize to simplex
 
@@ -43,10 +43,26 @@ rdirichlet_copula <- function(n, m, rho, total, nonzero_positions=NULL) {
   return(X)
 }
 
+sample_waning_rates_given_immunogenicity <- function(u, rho=0.4, 
+                                      alpha=1, shape=1, mean_decay_time = 30/21,
+                                      clip = 1e-12) {
+  n <- length(u)
+  
+  U  <- pgamma(u,rate=1,shape=alpha) # uniforms via known CDF
+  U  <- pmin(pmax(U, clip), 1-clip)        # avoid 0/1
+  z1 <- qnorm(U)
+  
+  z2 <- rho * z1 + sqrt(1 - rho^2) * rnorm(n)
+  w = qgamma(pnorm(z2), shape = shape, scale = mean_decay_time/shape)
+  
+  return(w)
+}
+
+
 # core model functions
 intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix){
   
-  # randomly draw number of actual antibodies (* antibodies per epitope) per pathogen
+  # randomly draw number of actual antibodies per pathogen
   n_antibodies = 1+rpois(N_expected_antibodies_per_pathogen-1,n=N_pathogens)
   
   # set the size of antibody repertoire to cover the range needed for reasonable correlations
@@ -84,7 +100,8 @@ initialize_immune_system = function(pathogens,
   colnames(log2_NAb) = rownames(pathogens$immunogenicity)
   
   # waning rate per antibody
-  waning_rate = rgamma(nrow(pathogens$sensitivity), shape = shape, scale = mean_decay_time/shape)
+  # waning_rate = rgamma(nrow(pathogens$sensitivity), shape = shape, scale = mean_decay_time/shape)
+  waning_rate = rep(0,nrow(pathogens$immunogenicity))
   names(waning_rate) = rownames(pathogens$immunogenicity)
   
   
@@ -101,9 +118,12 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
 }
 
 # immune system dynamics model
-immune_system_life_history = function(immune_system,pathogens,exposures,Duration,
+immune_system_life_history = function(pathogens,exposures,Duration,
                                       gamma=0.8,
-                                      max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9){
+                                      max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
+                                      shape=1, mean_decay_time=30/21){
+  
+  immune_system = initialize_immune_system(pathogens,Duration,shape=shape, mean_decay_time=mean_decay_time)
   
   exposure_counter = 0
   infected = 0 * exposures$time_exposed
@@ -111,6 +131,13 @@ immune_system_life_history = function(immune_system,pathogens,exposures,Duration
   
   for(k in exposures$time_exposed[1]:Duration){
     
+    # wane everything that's been initialized
+    initialized_NAb_idx = immune_system$waning_rate>0
+    
+    immune_system$log2_NAb[k,initialized_NAb_idx] = pmax(0,immune_system$log2_NAb[k-1,initialized_NAb_idx] -
+                                        immune_system$waning_rate[initialized_NAb_idx]*1.44)
+    
+    # check exposure
     if (k %in% exposures$time_exposed){
       exposure_counter = exposure_counter + 1
       
@@ -118,21 +145,22 @@ immune_system_life_history = function(immune_system,pathogens,exposures,Duration
                                    sensitivity=pathogens$sensitivity[,exposures$pathogen_exposed[exposure_counter]],
                                    gamma=gamma)
       
+      # if infected, boost
       if (runif(1)<p_inf[exposure_counter]){
         infected[exposure_counter]=1
-        idx = pathogens$immunogenicity[,exposures$pathogen_exposed[exposure_counter]] >0
+        infection_idx = pathogens$immunogenicity[,exposures$pathogen_exposed[exposure_counter]] >0
         
-        immune_system$log2_NAb[k,idx] = immune_system$log2_NAb[k-1,idx] + 
-                                            fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,idx], 
-                                                      weights = pathogens$immunogenicity[idx,exposures$pathogen_exposed[exposure_counter]],
+        if (any(!initialized_NAb_idx & infection_idx)){
+          immune_system$waning_rate[!initialized_NAb_idx & infection_idx] =
+            sample_waning_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
+                                                                                  exposures$pathogen_exposed[exposure_counter]])
+        }
+        
+        immune_system$log2_NAb[k,infection_idx] = immune_system$log2_NAb[k-1,infection_idx] + 
+                                            fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,infection_idx], 
+                                                      weights = pathogens$immunogenicity[infection_idx,exposures$pathogen_exposed[exposure_counter]],
                                                       max_log2_NAb = max_log2_NAb, mu = mu, sigma=sigma)
-        immune_system$log2_NAb[k,!idx] = pmax(0,immune_system$log2_NAb[k-1,!idx] - immune_system$waning_rate[!idx]*1.44)
-      } else {
-        immune_system$log2_NAb[k,] = pmax(0,immune_system$log2_NAb[k-1,] - immune_system$waning_rate*1.44)
-      }
-      
-    } else {
-      immune_system$log2_NAb[k,] = pmax(0,immune_system$log2_NAb[k-1,] - immune_system$waning_rate*1.44)
+      } 
     }
   }
   
