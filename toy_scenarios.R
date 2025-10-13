@@ -238,11 +238,17 @@ antibody_correlation_matrix
                                       gamma=0, # IM vaccine doesn't protect from itself
                                       max_log2_NAb=20,mu = 9, sigma=2)
   
+  person_plot = person
+  person_plot$serum_NAb = person_plot$serum_NAb[,-5]
   # serum titers over time
-  gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5))
+  gg_serum_titers(person_plot) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5))
   
   # sampled individual antibody traces and sensitivity-weighted average by waning rate quintile
   gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
-  
+
+  ggplot(data.frame(waning_rate = person$immune_system$waning_rate)) +
+    geom_histogram(aes(x=waning_rate)) +
+    geom_vline(aes(xintercept = mean(waning_rate))) +
+    scale_x_continuous(breaks=0:10)
 
   
