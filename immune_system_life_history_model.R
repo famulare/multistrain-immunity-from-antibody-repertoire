@@ -121,7 +121,7 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
 immune_system_life_history = function(pathogens,exposures,Duration,
                                       gamma=0.8,
                                       max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
-                                      shape=1, mean_decay_time=30/21,
+                                      shape=1, mean_decay_time=21/30,
                                       alpha=1){
   
   immune_system = initialize_immune_system(pathogens,Duration)
