@@ -9,7 +9,7 @@ source('immune_system_life_history_model.R')
 
 # configure
 Duration = 70*12 # months
-N_expected_antibodies_per_pathogen = 1e3 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
+N_expected_antibodies_per_pathogen = 1e2 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
 N_pathogens = 3
 
 # antibody correlation matrix that defines serogroups: 
@@ -57,7 +57,7 @@ ggplot(serum_plot) +
 
 # configure
 Duration = 20*12 # months
-N_expected_antibodies_per_pathogen = 1e3 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
+N_expected_antibodies_per_pathogen = 1e2 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
 N_pathogens = 3
 
 # antibody correlation matrix that defines serogroups: 
@@ -80,11 +80,11 @@ antibody_correlation_matrix
                          pathogen_exposed = c(1,2,3,1,2,3,1,2,3,1,2,3,1,2,3)) # don't want to think about co-infection
   
   # what should I use for gamma?
-  x=2^seq(0,9,by=0.1)
-  VE_approx_OPV = 10^(-2.3/(x^0.44))
-  lazy_VE = 1-x^(-.15)
-  plot(log2(x),VE_approx_OPV)
-  lines(log2(x),lazy_VE)
+  # x=2^seq(0,9,by=0.1)
+  # VE_approx_OPV = 10^(-2.3/(x^0.44))
+  # lazy_VE = 1-x^(-.15)
+  # plot(log2(x),VE_approx_OPV)
+  # lines(log2(x),lazy_VE)
   
   # run
   person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape=0.72, mean_decay_time=1)
@@ -99,7 +99,10 @@ antibody_correlation_matrix
 
 
 # bOPV-ish
-  set.seed(10)
+  # set.seed(10) # no cross reaction
+  # set.seed(1) # big cross reaction
+  set.seed(5) # moderate cross reaction
+  
   pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
 
   exposures = data.frame(time_exposed = c(2,3, 5,6, 8,9, 18,19, 60,61),
@@ -118,7 +121,7 @@ antibody_correlation_matrix
   
   
 # mOPV1-ish
-  set.seed(10)
+  set.seed(5)
   pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix)
 
   exposures = data.frame(time_exposed = c(2, 5, 8, 18, 60),
@@ -143,7 +146,7 @@ antibody_correlation_matrix
   
   # configure
   Duration = 26 # months
-  N_expected_antibodies_per_pathogen = 1e3 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
+  N_expected_antibodies_per_pathogen = 1e2
   N_pathogens = 3
   
   # antibody correlation matrix that defines serogroups: 
@@ -167,16 +170,16 @@ antibody_correlation_matrix
   # response model loosely informed by https://www.nejm.org/doi/full/10.1056/NEJMc2119912
   person = immune_system_life_history(pathogens,exposures,Duration,
                                       gamma=0, # IM vaccine doesn't protect from itself
-                                      max_log2_NAb=20,mu = 9, sigma=2,shape=0.8)
+                                      mu = 8.3,sigma=2,#sigma=3.3,
+                                      max_log2_NAb=30)
   
   # serum titers over time
-  gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5))
-  
+  gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5) ) #
+   
   # sampled individual antibody traces and sensitivity-weighted average by waning rate quintile
   gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
   
-  ## I'm not sure why I can't get a bigger boost. To play with...
-  
+
   # cross-responses
   serum_plot = data.frame(year=person$serum_NAb$year,
                           relative_titer_delta_over_wuhan = person$serum_NAb$pathogen_2/person$serum_NAb$pathogen_1,
@@ -246,9 +249,6 @@ antibody_correlation_matrix
   # sampled individual antibody traces and sensitivity-weighted average by waning rate quintile
   gg_antibody_histories_by_waning_quintile(N_pathogens,Duration,pathogens,person)
 
-  ggplot(data.frame(waning_rate = person$immune_system$waning_rate)) +
-    geom_histogram(aes(x=waning_rate)) +
-    geom_vline(aes(xintercept = mean(waning_rate))) +
-    scale_x_continuous(breaks=0:10)
+
 
   

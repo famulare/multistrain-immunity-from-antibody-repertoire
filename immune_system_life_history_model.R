@@ -133,11 +133,14 @@ immune_system_life_history = function(pathogens,exposures,Duration,
   for(k in exposures$time_exposed[1]:Duration){
     
     # wane everything that's been initialized
-    initialized_NAb_idx = immune_system$waning_rate>0
+    initialized_NAb_idx = immune_system$log2_NAb[k-1,]>0
     
     immune_system$log2_NAb[k,initialized_NAb_idx] = pmax(0,immune_system$log2_NAb[k-1,initialized_NAb_idx] -
                                         immune_system$waning_rate[initialized_NAb_idx]*1.44)
     
+    # kill off memory from everything that's waned to zero
+    initialized_NAb_idx = immune_system$log2_NAb[k-1,]>0
+
     # check exposure
     if (k %in% exposures$time_exposed){
       exposure_counter = exposure_counter + 1
@@ -193,34 +196,37 @@ gg_serum_titers = function(person){
 gg_antibody_histories_by_waning_quintile = function(N_pathogens,Duration,pathogens,person){
   ## individual antibodies
   for (k in 1:N_pathogens){
-    antibodies = rownames(pathogens$sensitivity)[pathogens$sensitivity[,k]>0]
+    antibodies = rownames(pathogens$sensitivity)[pathogens$sensitivity[,k]>0 & person$immune_system$waning_rate>0]
     tmp_waning_rates = person$immune_system$waning_rate[antibodies]
     
-    # select waning rates by quintiles
-    n_per <- 40
-    take <- data.frame(waning_rate = tmp_waning_rates, i = seq_along(tmp_waning_rates) ,
-                       row.names = names(tmp_waning_rates)) |>
-      mutate(waning_rate_quintile = ntile(waning_rate, 5)) |>
-      group_by(waning_rate_quintile) |>
-      slice_sample(n = n_per, replace = FALSE) |>
-      mutate(rep = 1:n_per) |>
-      ungroup() |>
-      mutate(antibody = sub('antibody_','',names(tmp_waning_rates)[i])) |>
-      mutate(sensitivity = pathogens$sensitivity[names(tmp_waning_rates)[i],k]) |>
-      mutate(waning_rate_quintile = factor(c('first','second','third','fourth','fifth')[waning_rate_quintile],
-                                           levels=c('first','second','third','fourth','fifth')))
-    
-    plot_dat =  data.frame(year = (1:Duration)/12,
-                           person$immune_system$log2_NAb[,antibodies[take$i]]) |>
-      pivot_longer(-year,names_to = 'antibody',values_to = 'log2_titer',names_prefix = 'antibody_') |>
-      left_join(take |> select(-i)) |>
-      group_by(waning_rate_quintile,year) |>
-      mutate(mean_log2_titer = log2(sum((2^log2_titer)*sensitivity)/sum(sensitivity))) |>
-      mutate(pathogen=k)
-    if (k==1){ 
-      antibody_plot_dat = plot_dat
-    } else {
-      antibody_plot_dat = rbind(antibody_plot_dat,plot_dat)
+    if(!is_empty(tmp_waning_rates)){
+      # select waning rates by quintiles
+      n_per <- pmax(1,pmin(40,floor(length(antibodies)/5)))
+      take <- data.frame(waning_rate = tmp_waning_rates, i = seq_along(tmp_waning_rates) ,
+                         row.names = names(tmp_waning_rates)) |>
+        mutate(waning_rate_quintile = ntile(waning_rate, 5)) |>
+        group_by(waning_rate_quintile) |>
+        slice_sample(n = n_per, replace = FALSE) |>
+        mutate(rep = 1:n_per) |>
+        ungroup() |>
+        mutate(antibody = sub('antibody_','',names(tmp_waning_rates)[i])) |>
+        mutate(sensitivity = pathogens$sensitivity[names(tmp_waning_rates)[i],k]) |>
+        mutate(waning_rate_quintile = factor(c('first','second','third','fourth','fifth')[waning_rate_quintile],
+                                             levels=c('first','second','third','fourth','fifth')))
+      
+      plot_dat =  data.frame(year = (1:Duration)/12,
+                             person$immune_system$log2_NAb[,antibodies[take$i]]) |>
+        pivot_longer(-year,names_to = 'antibody',values_to = 'log2_titer',names_prefix = 'antibody_') |>
+        left_join(take |> select(-i)) |>
+        group_by(waning_rate_quintile,year) |>
+        mutate(mean_log2_titer = log2(sum((2^log2_titer)*sensitivity)/sum(sensitivity))) |>
+        mutate(pathogen=k)
+      
+      if (k==1){ 
+        antibody_plot_dat = plot_dat
+      } else {
+        antibody_plot_dat = rbind(antibody_plot_dat,plot_dat)
+      }
     }
   }
   
