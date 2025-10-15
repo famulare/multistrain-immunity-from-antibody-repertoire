@@ -81,12 +81,60 @@ intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,an
                                    total = n_antibodies,
                                    nonzero_positions = immunogenicity>0,
                                    alpha = alpha)
-  
+
   # get rid of unnecessary zeros
   needed_antibodies = apply(immunogenicity>0,1,any)
   immunogenicity = immunogenicity[needed_antibodies,]
   sensitivity = sensitivity[needed_antibodies,]
 
+  # normalize sensitivity so that summing over it gives the serum titer
+  sensitivity = sweep(sensitivity, 2, colSums(sensitivity), "/")
+  
+  return(list(immunogenicity=immunogenicity,sensitivity=sensitivity))
+}
+
+# initialize escape variants
+# this is the wrong way to do this, as it should be done dynamically as pathogens are introduced
+# but this'll do for today
+intialize_escape_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
+                                      alpha=1, w_escape=0.9){
+  
+  # randomly draw number of actual antibodies per pathogen
+  n_antibodies = 1+rpois(N_expected_antibodies_per_pathogen-1,n=N_pathogens)
+  
+  # set the size of antibody repertoire to cover the range needed for reasonable correlations
+  N_global_antibodies = 100*N_pathogens * sum(n_antibodies)
+  
+  # first pass, same as endemic equilibrium 
+    # define the pathogen immunogenicity (strength of immune system stimulation)
+    immunogenicity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
+                                        rho=antibody_correlation_matrix, 
+                                        total = n_antibodies,
+                                        alpha = alpha)
+    
+    # define the pathogen sensitivity (strength of neutralization)
+    sensitivity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
+                                     rho=antibody_correlation_matrix, 
+                                     total = n_antibodies,
+                                     nonzero_positions = immunogenicity>0,
+                                     alpha = alpha)
+    
+  # second pass, step through to re-draw for specific cuts
+    # assume pathogens are numbered in order they appear in the simulation
+    for (k in 2:N_pathogens){
+      importances = rowMeans(as.matrix(immunogenicity[,1:(k-1)]) * as.matrix(sensitivity[,1:(k-1)]))
+      importances = importances/max(importances)*w_escape[k]
+    
+      immunogenicity[,k] = immunogenicity[,k] * (rbinom(n=length(importances),size=1,p=1-importances))
+      # needs more logic on the zeros here....
+    }
+
+    # get rid of unnecessary zeros
+    needed_antibodies = apply(immunogenicity>0,1,any)
+    immunogenicity = immunogenicity[needed_antibodies,]
+    sensitivity = sensitivity[needed_antibodies,]
+    
+  
   # normalize sensitivity so that summing over it gives the serum titer
   sensitivity = sweep(sensitivity, 2, colSums(sensitivity), "/")
   
