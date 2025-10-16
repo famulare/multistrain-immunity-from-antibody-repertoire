@@ -40,7 +40,7 @@ reference_medians = expand.grid(label = factor(c('baseline','after\n2nd dose',
   mutate(NAb_observed = 10^c(log10(5),3.2,2.5,3.5,3,log10(5),1.5,1.25,2.9,2.2))
 
 # run cohort
-N_people = 1000
+N_people = 100
 cohort=list()
 # tried parallelizing using `future`, but it was slower than the simple loop
 for (k in 1:N_people){
@@ -93,6 +93,9 @@ ggplot(plot_dat,aes(x=label,y=NAb_observed,color=strain,group=interaction(label,
 # tl-dr is one can kind of get the right dynamics for closely related strains, but I'm not getting 
 # affinity maturation "for free". But I think the pathogen model is wrong. So will try again!
 
+plot(pathogens$immunogenicity[,1],pathogens$immunogenicity[,3])
+plot(pathogens$sensitivity[,1],pathogens$sensitivity[,3])
+
 
 
 
@@ -102,8 +105,8 @@ ggplot(plot_dat,aes(x=label,y=NAb_observed,color=strain,group=interaction(label,
 # antibody correlation matrix that defines serogroups: 
 antibody_correlation_matrix = diag(1, N_pathogens)
 antibody_correlation_matrix[1,2] <- 0.9 -> antibody_correlation_matrix[2,1]
-antibody_correlation_matrix[1,3] <- 0.42 -> antibody_correlation_matrix[3,1]
-antibody_correlation_matrix[2,3] <- 0.42 -> antibody_correlation_matrix[3,2]
+antibody_correlation_matrix[1,3] <- 0.15 -> antibody_correlation_matrix[3,1]
+antibody_correlation_matrix[2,3] <- 0.15 -> antibody_correlation_matrix[3,2]
 rownames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
 colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
 
@@ -111,7 +114,7 @@ colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = ''
 set.seed(10) # omicron-similarity is really sensitive to the seed
 
 pathogens = intialize_escape_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                                alpha=1, w_escape = c(1,0.1,0.9))
+                                alpha=1, w_escape = c(1,1,1))
 
 
 cohort=list()
@@ -119,7 +122,7 @@ for (k in 1:N_people){
   cohort[[k]] = immune_system_life_history(pathogens,exposures,Duration,
                                            gamma=0, # IM vaccine doesn't protect from itself
                                            mu = 7.5,sigma=2.8,
-                                           max_log2_NAb=24, shape=1.5,mean_decay_time=13/30)
+                                           max_log2_NAb=24, shape=1.5,mean_decay_time=14/30)
 }
 
 plot_dat = as.data.frame(cohort[[1]]$serum_NAb) |>
@@ -156,9 +159,9 @@ ggplot(plot_dat,aes(x=label,y=NAb_observed,color=strain,group=interaction(label,
   xlab('') +
   scale_y_continuous(trans='log10',limits=10^c(0,5),breaks=10^seq(0,5))
 
-# not making a difference but I don't know why... something wrong with the immunogenicity zeros logic maybe
+
+plot(pathogens$immunogenicity[,1],pathogens$immunogenicity[,3])
+plot(pathogens$sensitivity[,1],pathogens$sensitivity[,3])
 
 
-
-
-
+# definitely need affinity maturation. Sigh!

@@ -97,7 +97,7 @@ intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,an
 # this is the wrong way to do this, as it should be done dynamically as pathogens are introduced
 # but this'll do for today
 intialize_escape_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                                      alpha=1, w_escape=0.9){
+                                      alpha=1, w_escape=0.9, eps=0.001){
   
   # randomly draw number of actual antibodies per pathogen
   n_antibodies = 1+rpois(N_expected_antibodies_per_pathogen-1,n=N_pathogens)
@@ -122,13 +122,57 @@ intialize_escape_pathogens = function(N_expected_antibodies_per_pathogen,N_patho
   # second pass, step through to re-draw for specific cuts
     # assume pathogens are numbered in order they appear in the simulation
     for (k in 2:N_pathogens){
-      importances = rowMeans(as.matrix(immunogenicity[,1:(k-1)]) * as.matrix(sensitivity[,1:(k-1)]))
-      importances = importances/max(importances)*w_escape[k]
-    
-      immunogenicity[,k] = immunogenicity[,k] * (rbinom(n=length(importances),size=1,p=1-importances))
-      # needs more logic on the zeros here....
-    }
+      
+      # what's being escaped
+      importances = immunogenicity[,1:(k-1)] * sensitivity[,1:(k-1)]
+      if (k>2){
+        importances = rowMeans(importances)
+      }
+      importances = pmin(1,importances/max(importances,na.rm=TRUE)*w_escape[k])
 
+      # where from?
+      evolved_from = sample(1:(k-1),1)
+      immunogenicity[,k] = immunogenicity[,evolved_from]
+      sensitivity[,k] = sensitivity[,evolved_from]
+      
+      # original epitopes
+      active_idx = immunogenicity[,evolved_from] >0
+      
+      # sites to evolve sampled in proportion to importance to ancestors
+      
+      
+      if (floor(n_antibodies[k]*(1-antibody_correlation_matrix[evolved_from,k])) <= n_antibodies[evolved_from]){
+        evolve_active_idx = sample(which(active_idx),
+                                   size = floor(n_antibodies[k]*(1-antibody_correlation_matrix[evolved_from,k])), 
+                                   prob = eps+importances[active_idx])
+      } else {
+        evolve_active_idx = sample(which(active_idx),
+                                   size = n_antibodies[evolved_from], 
+                                   prob = eps+importances[active_idx])
+        evolve_active_idx = c(evolve_active_idx, 
+                              sample(which(!active_idx),
+                                   size = n_antibodies[k]-n_antibodies[evolved_from]))
+      }
+      
+      # find new sites to evolve to
+      new_site_idx = sample(setdiff(which(!active_idx),evolve_active_idx),
+                            size = length(evolve_active_idx))
+      
+      # update immunogenicities and sensitivities
+      immunogenicity[new_site_idx,k] = sample(immunogenicity[evolve_active_idx,k], size = length(evolve_active_idx))
+      immunogenicity[evolve_active_idx,k] = 0
+      
+      sensitivity[new_site_idx,k] = sample(sensitivity[evolve_active_idx,k], size = length(evolve_active_idx))
+      sensitivity[evolve_active_idx,k] = 0
+    
+      
+      # immunogenicity[setdiff(1:length(active_idx),union(new_site_idx,evolve_active_idx)),k]=0
+      # sensitivity[setdiff(1:length(active_idx),union(new_site_idx,evolve_active_idx)),k]=0
+    }
+    
+    # plot(immunogenicity[,1],immunogenicity[,k])
+    # plot(sensitivity[,1],sensitivity[,k])
+    
     # get rid of unnecessary zeros
     needed_antibodies = apply(immunogenicity>0,1,any)
     immunogenicity = immunogenicity[needed_antibodies,]
