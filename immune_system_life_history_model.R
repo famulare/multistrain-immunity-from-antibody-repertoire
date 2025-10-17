@@ -126,7 +126,7 @@ intialize_escape_pathogens = function(N_expected_antibodies_per_pathogen,N_patho
       # what's being escaped
       importances = immunogenicity[,1:(k-1)] * sensitivity[,1:(k-1)]
       if (k>2){
-        importances = rowMeans(importances)
+        importances = rowProds(importances)
       }
       importances = pmin(1,importances/max(importances,na.rm=TRUE)*w_escape[k])
 

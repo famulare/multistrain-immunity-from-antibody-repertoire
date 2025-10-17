@@ -105,8 +105,8 @@ plot(pathogens$sensitivity[,1],pathogens$sensitivity[,3])
 # antibody correlation matrix that defines serogroups: 
 antibody_correlation_matrix = diag(1, N_pathogens)
 antibody_correlation_matrix[1,2] <- 0.9 -> antibody_correlation_matrix[2,1]
-antibody_correlation_matrix[1,3] <- 0.15 -> antibody_correlation_matrix[3,1]
-antibody_correlation_matrix[2,3] <- 0.15 -> antibody_correlation_matrix[3,2]
+antibody_correlation_matrix[1,3] <- 0.5 -> antibody_correlation_matrix[3,1]
+antibody_correlation_matrix[2,3] <- 0.5 -> antibody_correlation_matrix[3,2]
 rownames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
 colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = '')
 
@@ -114,7 +114,7 @@ colnames(antibody_correlation_matrix) = paste('pathogen_',1:N_pathogens,sep = ''
 set.seed(10) # omicron-similarity is really sensitive to the seed
 
 pathogens = intialize_escape_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                                alpha=1, w_escape = c(1,1,1))
+                                alpha=1, w_escape = c(1,1,10))
 
 
 cohort=list()
