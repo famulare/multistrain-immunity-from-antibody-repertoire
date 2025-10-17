@@ -25,7 +25,7 @@ antibody_correlation_matrix
 set.seed(10) # omicron-similarity is really sensitive to the seed
 
 pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                                alpha=1)
+                                dirichlet_alpha = 1)
 
 exposures = data.frame(time_exposed = c(11,12, 20),
                        pathogen_exposed = c(1,1,1)) 
@@ -46,7 +46,7 @@ for (k in 1:N_people){
   cohort[[k]] = immune_system_life_history(pathogens,exposures,Duration,
                                             gamma=0, # IM vaccine doesn't protect from itself
                                             mu = 7.5,sigma=2.8,
-                                            max_log2_NAb=24, shape=1.5,mean_decay_time=13/30)
+                                            max_log2_NAb=24, shape_waning=1.5,mean_waning_time=13/30)
 }
 
 sampling_strategy = data.frame(year = c(1,11,12,19,20,26)/12,

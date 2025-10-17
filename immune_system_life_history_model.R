@@ -17,7 +17,7 @@ probability_infected = function(log2_NAb_pre,sensitivity=1,gamma=0.8){
   return(p)
 }
 
-rdirichlet_copula <- function(n, m, rho, total, alpha=1,nonzero_positions=NULL) {
+rdirichlet_copula <- function(n, m, rho, total, dirichlet_alpha=1,nonzero_positions=NULL) {
   # helper to define antibody relevances for each pathogen, with approximate antibody correlations (thanks chatGPT!)
   
   # For each component k=1..m, draw an n-vector ~ N(0, rho)
@@ -33,7 +33,7 @@ rdirichlet_copula <- function(n, m, rho, total, alpha=1,nonzero_positions=NULL) 
   U <- pnorm(Z)                     # m x n uniforms from Gaussian copula
   U[!keep] <- 0
   
-  G <- qgamma(U, rate = 1,shape=alpha)             # m x n exponentials (Gamma(shape=1))
+  G <- qgamma(U, rate = 1,shape=dirichlet_alpha)             # m x n exponentials (Gamma(shape=1))
   X <- t(G)                          # n x m
   X <- t(X / rowMaxs(X))             # normalize to simplex
 
@@ -43,17 +43,17 @@ rdirichlet_copula <- function(n, m, rho, total, alpha=1,nonzero_positions=NULL) 
   return(X)
 }
 
-sample_waning_rates_given_immunogenicity <- function(u, rho=0.4, 
-                                      alpha=1, shape=1, mean_decay_time = 30/21,
+sample_rates_given_immunogenicity <- function(u, rho=0.4, 
+                                      dirichlet_alpha=1, shape=1, mean_time = 30/21,
                                       clip = 1e-12) {
   n <- length(u)
   
-  U  <- pgamma(u,rate=1,shape=alpha) # uniforms via known CDF
+  U  <- pgamma(u,rate=1,shape=dirichlet_alpha) # uniforms via known CDF
   U  <- pmin(pmax(U, clip), 1-clip)        # avoid 0/1
   z1 <- qnorm(U)
   
   z2 <- rho * z1 + sqrt(1 - rho^2) * rnorm(n)
-  w = qgamma(pnorm(z2), shape = shape, scale = mean_decay_time/shape)
+  w = qgamma(pnorm(z2), shape = shape, scale = mean_time/shape)
   
   return(w)
 }
@@ -61,7 +61,7 @@ sample_waning_rates_given_immunogenicity <- function(u, rho=0.4,
 
 # core model functions
 intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                               alpha=1){
+                               dirichlet_alpha=1){
   
   # randomly draw number of actual antibodies per pathogen
   n_antibodies = 1+rpois(N_expected_antibodies_per_pathogen-1,n=N_pathogens)
@@ -73,14 +73,14 @@ intialize_pathogens = function(N_expected_antibodies_per_pathogen,N_pathogens,an
   immunogenicity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
                                       rho=antibody_correlation_matrix, 
                                       total = n_antibodies,
-                                      alpha = alpha)
+                                      dirichlet_alpha = dirichlet_alpha)
   
   # define the pathogen sensitivity (strength of neutralization)
   sensitivity <- rdirichlet_copula(n=N_pathogens, m=N_global_antibodies, 
                                    rho=antibody_correlation_matrix, 
                                    total = n_antibodies,
                                    nonzero_positions = immunogenicity>0,
-                                   alpha = alpha)
+                                   dirichlet_alpha = dirichlet_alpha)
   
   # get rid of unnecessary zeros
   needed_antibodies = apply(immunogenicity>0,1,any)
@@ -104,8 +104,15 @@ initialize_immune_system = function(pathogens,Duration){
   waning_rate = rep(0,nrow(pathogens$immunogenicity))
   names(waning_rate) = rownames(pathogens$immunogenicity)
   
+  # initialize broading rate per antibody
+  broadening_rate = rep(0,nrow(pathogens$immunogenicity))
+  names(broadening_rate) = rownames(pathogens$immunogenicity)
+  parent = rep(NA,nrow(pathogens$immunogenicity))
+  names(parent) = rownames(pathogens$immunogenicity)
   
-  return(list(log2_NAb=log2_NAb,waning_rate=waning_rate))
+  
+  return(list(log2_NAb=log2_NAb,waning_rate=waning_rate,broadening_rate=broadening_rate,
+              parent=parent))
 }
 
 # poisson exposure model
@@ -121,8 +128,10 @@ initialize_poisson_exposure = function(exposure_rate,Duration,N_pathogens){
 immune_system_life_history = function(pathogens,exposures,Duration,
                                       gamma=0.8,
                                       max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
-                                      shape=1, mean_decay_time=21/30,
-                                      alpha=1){
+                                      dirichlet_alpha=1,
+                                      shape_waning=1, mean_waning_time=21/30,  
+                                      shape_broadening = 1, mean_broadening_time=1,
+                                      max_broadening_weight=2^(-10)){
   
   immune_system = initialize_immune_system(pathogens,Duration)
   
@@ -138,8 +147,9 @@ immune_system_life_history = function(pathogens,exposures,Duration,
     immune_system$log2_NAb[k,initialized_NAb_idx] = pmax(0,immune_system$log2_NAb[k-1,initialized_NAb_idx] -
                                         immune_system$waning_rate[initialized_NAb_idx]*1.44)
     
-    # kill off memory from everything that's waned to zero
-    initialized_NAb_idx = immune_system$log2_NAb[k-1,]>0
+    # to do: figure out how to implement broadening timestep, ideally without keeping a target...
+
+    
 
     # check exposure
     if (k %in% exposures$time_exposed){
@@ -155,17 +165,57 @@ immune_system_life_history = function(pathogens,exposures,Duration,
         infection_idx = pathogens$immunogenicity[,exposures$pathogen_exposed[exposure_counter]] >0
         
         if (any(!initialized_NAb_idx & infection_idx)){
+          # effects of affinity maturation are broken into two pieces:
+          # first part of getting better at initializing antigen is covered by correlation of
+          # waning rate with immunogenicity here
+          
           immune_system$waning_rate[!initialized_NAb_idx & infection_idx] =
-            sample_waning_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
+            sample_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
                                                                                   exposures$pathogen_exposed[exposure_counter]],
-                                                     alpha = alpha,
-                                                     shape=shape, mean_decay_time=mean_decay_time)
+                                                     dirichlet_alpha = dirichlet_alpha,
+                                                     shape=shape_waning, mean_time=mean_waning_time)
+          
+          # parent is self
+          immune_system$parent[!initialized_NAb_idx & infection_idx] = 
+            as.numeric(sub('antibody_','',names(which(!initialized_NAb_idx & infection_idx))))
+            
+          # second part is broadening rate here
+          immune_system$broadening_rate[!initialized_NAb_idx & infection_idx] =
+            sample_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
+                                                                                  exposures$pathogen_exposed[exposure_counter]],
+                                                     dirichlet_alpha = dirichlet_alpha,
+                                                     shape=shape_broadening, mean_time=mean_broadening_time)
+          
+          
         }
         
+        # "fast" immune response to present antigens
         immune_system$log2_NAb[k,infection_idx] = immune_system$log2_NAb[k-1,infection_idx] + 
                                             fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,infection_idx], 
                                                       weights = pathogens$immunogenicity[infection_idx,exposures$pathogen_exposed[exposure_counter]],
                                                       max_log2_NAb = max_log2_NAb, mu = mu, sigma=sigma)
+      
+        # second part of affinity maturation is broadening over time which needs the additional logic here
+        # first, figure out who gets to broaden within the space of antibodies living in the simulation
+        # probability of broadening correlated with immunogenicity 
+        expansion_weights = 2^(immune_system$log2_NAb[k,infection_idx]) * max_broadening_weight
+        n_expansion = rpois(n=sum(infection_idx),lambda = expansion_weights)
+        
+        parents = which(infection_idx)
+        parents = rep(parents, n_expansion)
+        
+        if(sum(n_expansion)>sum(immune_system$log2_NAb[k,]==0)){
+          parents = sample(parents,size=sum(immune_system$log2_NAb[k,]==0))
+        }
+        
+        children = sample(which(immune_system$log2_NAb[k,]==0),
+                          size=length(parents))
+        
+        immune_system$waning_rate[children] = immune_system$waning_rate[parents]
+        immune_system$broadening_rate[children] = immune_system$broadening_rate[parents]
+        immune_system$parent[children] = names(parents)
+        
+        immune_system$log2_NAb[k,children]=0 # stay zero for first month  
       } 
     }
   }
@@ -217,7 +267,7 @@ gg_antibody_histories_by_waning_quintile = function(N_pathogens,Duration,pathoge
       plot_dat =  data.frame(year = (1:Duration)/12,
                              person$immune_system$log2_NAb[,antibodies[take$i]]) |>
         pivot_longer(-year,names_to = 'antibody',values_to = 'log2_titer',names_prefix = 'antibody_') |>
-        left_join(take |> select(-i)) |>
+        left_join(take |> select(-i), by='antibody') |>
         group_by(waning_rate_quintile,year) |>
         mutate(mean_log2_titer = log2(sum((2^log2_titer)*sensitivity)/sum(sensitivity))) |>
         mutate(pathogen=k)
@@ -239,3 +289,5 @@ gg_antibody_histories_by_waning_quintile = function(N_pathogens,Duration,pathoge
   
   return(p)
 }
+
+# mab cross-reactivity over time plots

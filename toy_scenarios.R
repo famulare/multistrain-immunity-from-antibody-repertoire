@@ -87,7 +87,7 @@ antibody_correlation_matrix
   # lines(log2(x),lazy_VE)
   
   # run
-  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape=0.72, mean_decay_time=1)
+  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape_waning=0.72, mean_waning_time=1)
   
   ## plot some fun stuff!
   
@@ -109,7 +109,7 @@ antibody_correlation_matrix
                          pathogen_exposed = c(1,3,1,3,1,3,1,3,1,3)) # don't want to think about co-infection
   
   # run
-  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape=0.72, mean_decay_time=30/21)
+  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape_waning=0.72, mean_waning_time=30/21)
   
   ## plot some fun stuff!
   
@@ -128,7 +128,7 @@ antibody_correlation_matrix
                          pathogen_exposed = c(1,1,1,1,1)) # don't want to think about co-infection
   
   # run
-  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape=0.72, mean_decay_time=30/21)
+  person = immune_system_life_history(pathogens,exposures,Duration,gamma=0.15,shape_waning = 0.72, mean_waning_time=30/21)
   
   ## plot some fun stuff!
   
@@ -161,7 +161,7 @@ antibody_correlation_matrix
   # original mrna-like
   set.seed(10)
   pathogens = intialize_pathogens(N_expected_antibodies_per_pathogen,N_pathogens,antibody_correlation_matrix,
-                                  alpha=1)
+                                  dirichlet_alpha =1)
 
   exposures = data.frame(time_exposed = c(11,12, 20),
                          pathogen_exposed = c(1,1,1)) 
