@@ -107,6 +107,8 @@ initialize_immune_system = function(pathogens,Duration){
   # initialize broading rate per antibody
   broadening_rate = rep(0,nrow(pathogens$immunogenicity))
   names(broadening_rate) = rownames(pathogens$immunogenicity)
+  broadening_ratio = rep(0,nrow(pathogens$immunogenicity))
+  names(broadening_ratio) = rownames(pathogens$immunogenicity)
   parent = rep(NA,nrow(pathogens$immunogenicity))
   names(parent) = rownames(pathogens$immunogenicity)
   
@@ -130,8 +132,8 @@ immune_system_life_history = function(pathogens,exposures,Duration,
                                       max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
                                       dirichlet_alpha=1,
                                       shape_waning=1, mean_waning_time=21/30,  
-                                      shape_broadening = 1, mean_broadening_time=1,
-                                      max_broadening_weight=2^(-10)){
+                                      shape_broadening = 10, mean_broadening_time=2,
+                                      max_mean_broadening_slots = 5){
   
   immune_system = initialize_immune_system(pathogens,Duration)
   
@@ -140,17 +142,27 @@ immune_system_life_history = function(pathogens,exposures,Duration,
   p_inf=infected
   
   for(k in exposures$time_exposed[1]:Duration){
-    
+
     # wane everything that's been initialized
     initialized_NAb_idx = immune_system$log2_NAb[k-1,]>0
     
     immune_system$log2_NAb[k,initialized_NAb_idx] = pmax(0,immune_system$log2_NAb[k-1,initialized_NAb_idx] -
                                         immune_system$waning_rate[initialized_NAb_idx]*1.44)
     
-    # to do: figure out how to implement broadening timestep, ideally without keeping a target...
-
+    # broadenening step
+    broadened_idx = which(immune_system$parent != names(immune_system$parent))
+    parent_idx = match(immune_system$parent[broadened_idx],names(immune_system$log2_NAb[k,]))
     
-
+    # iterated version of log2NAb_child = log2NAb_parent * p_max * (1 - exp(-w * t))
+    # log2NAb_child[k] = log2NAb_parent[k] * p_max * (1 - (1 - log2NAb_child[k-1]/(p_max*log2NAb_parent[k-1]))*exp(-w))
+    w = immune_system$waning_rate[broadened_idx]
+    Npk = immune_system$log2_NAb[k,parent_idx] * immune_system$broadening_ratio[broadened_idx]  
+    Npkm1 = immune_system$log2_NAb[k-1,parent_idx] * immune_system$broadening_ratio[broadened_idx]  
+    
+    started_idx = Npkm1>0
+    immune_system$log2_NAb[k,broadened_idx[started_idx]] = Npk[started_idx] * 
+      (1 - (1 - immune_system$log2_NAb[k-1,broadened_idx[started_idx]]/Npkm1[started_idx])*exp(-w[started_idx]))
+    
     # check exposure
     if (k %in% exposures$time_exposed){
       exposure_counter = exposure_counter + 1
@@ -176,29 +188,28 @@ immune_system_life_history = function(pathogens,exposures,Duration,
                                                      shape=shape_waning, mean_time=mean_waning_time)
           
           # parent is self
-          immune_system$parent[!initialized_NAb_idx & infection_idx] = 
-            as.numeric(sub('antibody_','',names(which(!initialized_NAb_idx & infection_idx))))
+          immune_system$parent[!initialized_NAb_idx & infection_idx] = names(which(!initialized_NAb_idx & infection_idx))
             
-          # second part is broadening rate here
+          # second part of broadening rate here
           immune_system$broadening_rate[!initialized_NAb_idx & infection_idx] =
             sample_rates_given_immunogenicity(u = pathogens$immunogenicity[!initialized_NAb_idx & infection_idx,
                                                                                   exposures$pathogen_exposed[exposure_counter]],
                                                      dirichlet_alpha = dirichlet_alpha,
                                                      shape=shape_broadening, mean_time=mean_broadening_time)
           
-          
         }
         
         # "fast" immune response to present antigens
         immune_system$log2_NAb[k,infection_idx] = immune_system$log2_NAb[k-1,infection_idx] + 
-                                            fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,infection_idx], 
-                                                      weights = pathogens$immunogenicity[infection_idx,exposures$pathogen_exposed[exposure_counter]],
-                                                      max_log2_NAb = max_log2_NAb, mu = mu, sigma=sigma)
-      
+          fold_rise(log2_NAb_pre = immune_system$log2_NAb[k-1,infection_idx], 
+                    weights = pathogens$immunogenicity[infection_idx,exposures$pathogen_exposed[exposure_counter]],
+                    max_log2_NAb = max_log2_NAb, mu = mu, sigma=sigma)
+        
         # second part of affinity maturation is broadening over time which needs the additional logic here
-        # first, figure out who gets to broaden within the space of antibodies living in the simulation
+        # figure out who gets to broaden within the space of antibodies living in the simulation
         # probability of broadening correlated with immunogenicity 
-        expansion_weights = 2^(immune_system$log2_NAb[k,infection_idx]) * max_broadening_weight
+        expansion_weights = (immune_system$log2_NAb[k ,infection_idx]) 
+        expansion_weights = expansion_weights / max(expansion_weights)* max_mean_broadening_slots
         n_expansion = rpois(n=sum(infection_idx),lambda = expansion_weights)
         
         parents = which(infection_idx)
@@ -206,16 +217,33 @@ immune_system_life_history = function(pathogens,exposures,Duration,
         
         if(sum(n_expansion)>sum(immune_system$log2_NAb[k,]==0)){
           parents = sample(parents,size=sum(immune_system$log2_NAb[k,]==0))
-        }
-        
-        children = sample(which(immune_system$log2_NAb[k,]==0),
-                          size=length(parents))
+        } 
+        children = sample(which(immune_system$log2_NAb[k,]==0), size=length(parents))
         
         immune_system$waning_rate[children] = immune_system$waning_rate[parents]
+        immune_system$broadening_ratio[children] = rexp(n=length(children),rate=1/immune_system$waning_rate[children])
         immune_system$broadening_rate[children] = immune_system$broadening_rate[parents]
         immune_system$parent[children] = names(parents)
         
         immune_system$log2_NAb[k,children]=0 # stay zero for first month  
+      
+        
+        # I have a choice about what happens to originally cross-reactive antibodies when directly stimulated
+        # this choice centers the antibody family around the newly boosted antigen and no longer the old
+        boosted_broadened_idx = which(infection_idx & (immune_system$parent != names(immune_system$parent)))
+        boosted_family_idx = which(immune_system$parent %in% immune_system$parent[boosted_broadened_idx])
+        boosted_family_idx = setdiff(boosted_family_idx,boosted_broadened_idx)
+        
+        # parent and child swap places
+        immune_system$parent[boosted_broadened_idx]
+        immune_system$parent[boosted_family_idx]
+        matched_family_idx = match(immune_system$parent[boosted_family_idx],immune_system$parent[boosted_broadened_idx])
+        
+        # child becomes parent
+        immune_system$parent[boosted_broadened_idx] = names(boosted_broadened_idx)
+        # old parent and siblings become child of new parent
+        immune_system$parent[boosted_family_idx] = names(boosted_broadened_idx)[matched_family_idx]
+        
       } 
     }
   }
