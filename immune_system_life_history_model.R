@@ -132,8 +132,8 @@ immune_system_life_history = function(pathogens,exposures,Duration,
                                       max_log2_NAb = 16, mu = 16/15*7.2, sigma=16/15*2.9,
                                       dirichlet_alpha=1,
                                       shape_waning=1, mean_waning_time=21/30,  
-                                      shape_broadening = 10, mean_broadening_time=2,
-                                      max_mean_broadening_slots = 5){
+                                      shape_broadening = 1, mean_broadening_time=2,
+                                      max_mean_broadening_slots = 10, lambda_broadening = 0.1){
   
   immune_system = initialize_immune_system(pathogens,Duration)
   
@@ -158,7 +158,6 @@ immune_system_life_history = function(pathogens,exposures,Duration,
     w = immune_system$waning_rate[broadened_idx]
     Npk = immune_system$log2_NAb[k,parent_idx] * immune_system$broadening_ratio[broadened_idx]
     Npkm1 = immune_system$log2_NAb[k-1,parent_idx] * immune_system$broadening_ratio[broadened_idx]
-
 
     started_idx = Npkm1>0
     immune_system$log2_NAb[k,broadened_idx[started_idx]] = Npk[started_idx] *
@@ -219,35 +218,54 @@ immune_system_life_history = function(pathogens,exposures,Duration,
         if(sum(n_expansion)>sum(immune_system$log2_NAb[k,]==0)){
           parents = sample(parents,size=sum(immune_system$log2_NAb[k,]==0))
         }
-        children = sample(which(immune_system$log2_NAb[k,]==0), size=length(parents))
 
-        immune_system$waning_rate[children] = immune_system$waning_rate[parents]
-        immune_system$broadening_ratio[children] = runif(n=length(children))
-        immune_system$broadening_rate[children] = immune_system$broadening_rate[parents]
-        immune_system$parent[children] = names(parents)
+        # weight by pathogen similarity
+        w = colMeans(pathogens$immunogenicity[,exposures$pathogen_exposed[exposure_counter]] *
+                       pathogens$immunogenicity[,-exposures$pathogen_exposed[exposure_counter]])
+        
+        pathogen_idx = matrix(as.numeric(pathogens$immunogenicity[which(immune_system$log2_NAb[k,!infection_idx]==0),
+                                            -exposures$pathogen_exposed[exposure_counter]]>0),ncol=ncol(pathogens$immunogenicity)-1)
+        w = pathogen_idx %*% w
+        
+        # w=1+0*w
+        
+        if (any(w>0)){
+          
+          if(sum(w>0)<length(parents)){
+            parents = sample(parents,size=sum(w>0))
+          }
+            
+          children = sample(which(immune_system$log2_NAb[k,!infection_idx]==0), size=length(parents), prob=w)
+  
+          immune_system$waning_rate[children] = immune_system$waning_rate[parents]
+          immune_system$broadening_ratio[children] = exp(-lambda_broadening*runif(n=length(children)))
+          immune_system$broadening_rate[children] = immune_system$broadening_rate[parents]
+          immune_system$parent[children] = names(parents)
+  
+          # I have a choice about what happens to originally cross-reactive antibodies when directly stimulated
+          # this choice centers the antibody family around the newly boosted antigen and no longer the old
+          boosted_broadened_idx = which(infection_idx & (immune_system$parent != names(immune_system$parent)))
+          boosted_family_idx = which((immune_system$parent %in% immune_system$parent[boosted_broadened_idx]))
+          boosted_family_idx = setdiff(boosted_family_idx,boosted_broadened_idx)
+          matched_family_idx = match(immune_system$parent[boosted_family_idx],immune_system$parent[boosted_broadened_idx])
 
-        immune_system$log2_NAb[k,children]=0 # stay zero for first month
-
-
-        # I have a choice about what happens to originally cross-reactive antibodies when directly stimulated
-        # this choice centers the antibody family around the newly boosted antigen and no longer the old
-        boosted_broadened_idx = which(infection_idx & (immune_system$parent != names(immune_system$parent)))
-        boosted_family_idx = which(immune_system$parent %in% immune_system$parent[boosted_broadened_idx])
-        boosted_family_idx = setdiff(boosted_family_idx,boosted_broadened_idx)
-
-        # parent and child swap places
-        immune_system$parent[boosted_broadened_idx]
-        immune_system$parent[boosted_family_idx]
-        matched_family_idx = match(immune_system$parent[boosted_family_idx],immune_system$parent[boosted_broadened_idx])
-
-        # child becomes parent
-        immune_system$parent[boosted_broadened_idx] = names(boosted_broadened_idx)
-        # old parent and siblings become child of new parent
-        immune_system$parent[boosted_family_idx] = names(boosted_broadened_idx)[matched_family_idx]
-
-        # create broadening ratio for new children
-        immune_system$broadening_ratio[boosted_family_idx] = runif(n=length(boosted_family_idx))
-
+          # parent and child swap places
+          # child becomes parent
+          immune_system$parent[boosted_broadened_idx] = names(boosted_broadened_idx)
+          # old parent and siblings become child of new parent
+          immune_system$parent[boosted_family_idx] = names(boosted_broadened_idx)[matched_family_idx]
+          
+          # create broadening ratio for new children
+          immune_system$broadening_ratio[boosted_family_idx[is.na(immune_system$broadening_ratio[boosted_family_idx])]] =
+            exp(-lambda_broadening*runif(n=length(boosted_family_idx[is.na(immune_system$broadening_ratio[boosted_family_idx])])))
+          
+          # familial NAbs boost with parent boost
+          immune_system$log2_NAb[k,boosted_family_idx] = pmax(immune_system$log2_NAb[k,boosted_family_idx],
+            immune_system$log2_NAb[k-1,boosted_family_idx] +
+            immune_system$broadening_ratio[boosted_family_idx] * 
+            (immune_system$log2_NAb[k,boosted_broadened_idx[matched_family_idx]]-
+               immune_system$log2_NAb[k-1,boosted_broadened_idx[matched_family_idx]]))
+        }
       } 
     }
   }

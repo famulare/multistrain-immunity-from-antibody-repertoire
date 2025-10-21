@@ -9,7 +9,7 @@ source('immune_system_life_history_model.R')
 
 # configure
 Duration = 70*12 # months
-N_expected_antibodies_per_pathogen = 1e2 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
+N_expected_antibodies_per_pathogen = 5e2 # this is really meant to be few epitopes per pathogen times many antibodies per epitope...
 N_pathogens = 3
 
 # antibody correlation matrix that defines serogroups: 
@@ -146,7 +146,7 @@ antibody_correlation_matrix
   
   # configure
   Duration = 26 # months
-  N_expected_antibodies_per_pathogen = 1e2
+  N_expected_antibodies_per_pathogen = 3e2
   N_pathogens = 3
   
   # antibody correlation matrix that defines serogroups: 
@@ -171,7 +171,8 @@ antibody_correlation_matrix
   person = immune_system_life_history(pathogens,exposures,Duration,
                                       gamma=0, # IM vaccine doesn't protect from itself
                                       mu = 8.3,sigma=2,#sigma=3.3,
-                                      max_log2_NAb=30)
+                                      max_log2_NAb=30,
+                                      max_mean_broadening_slots = 10, lambda_broadening = 0.1)
   
   # serum titers over time
   gg_serum_titers(person) + scale_y_continuous(trans='log10',limits=10^c(-0.1,5), breaks = 10^c(0:5) ) #
